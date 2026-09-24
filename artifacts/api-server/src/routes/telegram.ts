@@ -314,6 +314,6 @@ function formatDateTime(date: Date): string {
   );
   return `${values.day}.${values.month} ${values.hour}:${values.minute}`;
 }
-};
+
 
 export default router;
