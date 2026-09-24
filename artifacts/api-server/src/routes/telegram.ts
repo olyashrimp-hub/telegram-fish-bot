@@ -16,6 +16,7 @@ import {
 } from "../services/fish-transfers";
 import { formatLootResponse } from "../services/loot";
 import { recordChatMessage } from "../services/activity";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
@@ -26,12 +27,20 @@ router.post("/telegram/webhook", async (req, res) => {
     return;
   }
 
-  const update = req.body as TelegramUpdate;
+  try {
+    await handleTelegramUpdate(req.body as TelegramUpdate);
+    res.json({ ok: true });
+  } catch (error) {
+    req.log.error({ err: error }, "Could not process Telegram update");
+    res.status(500).json({ ok: false });
+  }
+});
+
+export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
   const message = update?.message;
   const text = message?.text;
 
   if (!message || !message.from) {
-    res.json({ ok: true });
     return;
   }
 
@@ -45,7 +54,6 @@ router.post("/telegram/webhook", async (req, res) => {
   }
 
   if (!text) {
-    res.json({ ok: true });
     return;
   }
 
@@ -71,10 +79,9 @@ router.post("/telegram/webhook", async (req, res) => {
     try {
       await sendTelegramMessage(message.chat.id, responseText, message.message_id);
     } catch (error) {
-      req.log.error({ err: error }, "Could not answer Telegram balance command");
+      logger.error({ err: error }, "Could not answer Telegram balance command");
     }
 
-    res.json({ ok: true });
     return;
   }
 
@@ -92,10 +99,9 @@ router.post("/telegram/webhook", async (req, res) => {
     try {
       await sendTelegramMessage(message.chat.id, responseText, message.message_id);
     } catch (error) {
-      req.log.error({ err: error }, "Could not answer Telegram daily command");
+      logger.error({ err: error }, "Could not answer Telegram daily command");
     }
 
-    res.json({ ok: true });
     return;
   }
 
@@ -116,10 +122,9 @@ router.post("/telegram/webhook", async (req, res) => {
     try {
       await sendTelegramMessage(message.chat.id, responseText, message.message_id);
     } catch (error) {
-      req.log.error({ err: error }, "Could not answer Telegram fridge command");
+      logger.error({ err: error }, "Could not answer Telegram fridge command");
     }
 
-    res.json({ ok: true });
     return;
   }
 
@@ -137,10 +142,9 @@ router.post("/telegram/webhook", async (req, res) => {
         message.message_id,
       );
     } catch (error) {
-      req.log.error({ err: error }, "Could not answer Telegram loot command");
+      logger.error({ err: error }, "Could not answer Telegram loot command");
     }
 
-    res.json({ ok: true });
     return;
   }
 
@@ -172,16 +176,14 @@ router.post("/telegram/webhook", async (req, res) => {
     try {
       await sendTelegramMessage(message.chat.id, responseText, message.message_id);
     } catch (error) {
-      req.log.error({ err: error }, "Could not answer Telegram deduction command");
+      logger.error({ err: error }, "Could not answer Telegram deduction command");
     }
 
-    res.json({ ok: true });
     return;
   }
 
   const isFishCommand = /^(?:\/pay(?:@[a-zA-Z0-9_]+)?|подарить)\b/iu.test(text.trim());
   if (!isFishCommand) {
-    res.json({ ok: true });
     return;
   }
 
@@ -217,11 +219,9 @@ router.post("/telegram/webhook", async (req, res) => {
   try {
     await sendTelegramMessage(message.chat.id, responseText, message.message_id);
   } catch (error) {
-    req.log.error({ err: error }, "Could not answer Telegram fish command");
+    logger.error({ err: error }, "Could not answer Telegram fish command");
   }
-
-  res.json({ ok: true });
-});
+}
 
 function formatFridgeStatus(expiresAt: Date | null, now = new Date()): string {
   if (!expiresAt || expiresAt.getTime() <= now.getTime()) {
