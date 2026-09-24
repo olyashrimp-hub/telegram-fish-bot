@@ -11,15 +11,35 @@ import {
   openLootChest,
   transferFish,
 } from "../services/fish-transfers";
+import { recordChatMessage } from "../services/activity";
 
 const router: IRouter = Router();
 
+router.post("/telegram/webhook", async (req, res) => {
   const secret = req.header("x-telegram-bot-api-secret-token");
+  if (!isValidTelegramWebhookSecret(secret)) {
+    res.status(401).json({ ok: false });
+    return;
+  }
+
   const update = req.body as TelegramUpdate;
   const message = update?.message;
   const text = message?.text;
 
-  if (!message || !message.from || !text) {
+  if (!message || !message.from) {
+    res.json({ ok: true });
+    return;
+  }
+
+  if (!message.from.is_bot) {
+    await recordChatMessage({
+      chatId: message.chat.id,
+      telegramId: message.from.id,
+      displayName: getTelegramDisplayName(message.from),
+    });
+  }
+
+  if (!text) {
     res.json({ ok: true });
     return;
   }
@@ -31,7 +51,9 @@ const router: IRouter = Router();
       displayName: getTelegramDisplayName(message.from),
     });
 
-  let responseText: string;
+    const responseText = daily.ok
+      ? `Вы поймали ${daily.amount} 🐟, так держать! Ваш баланс: ${daily.balance} 🐟`
+      : "❌ Бонус можно получать только раз в 3 дня.";
 
     try {
       await sendTelegramMessage(message.chat.id, responseText, message.message_id);
@@ -50,7 +72,19 @@ const router: IRouter = Router();
       displayName: getTelegramDisplayName(message.from),
     });
 
-  let responseText: string;
+    const responseText = !loot.ok
+      ? loot.reason === "insufficient-balance"
+        ? "❌ Сундук стоит 10 🐟! У вас недостаточно рыбок."
+        : `⏳ Следующий сундук можно открыть через ${formatRemainingTime(loot.nextClaimAt)}.`
+      : loot.outcome === "piranha"
+        ? `Упс, похоже сегодня не ваш день. Из сундука выпрыгивает пиранья, больно кусает вас. Вы теряете 5 рыб. Ваш баланс: ${loot.balance} 🐟`
+        : loot.outcome === "common"
+          ? `📦 Вы открыли сундук и нашли ${loot.amount} 🐟! Ваш баланс: ${loot.balance} 🐟`
+          : loot.outcome === "great"
+            ? `📦 Отличная находка! В сундуке оказалось ${loot.amount} 🐟! Ваш баланс: ${loot.balance} 🐟`
+            : loot.outcome === "super"
+              ? `📦 Супер-удача! В сундуке оказалось ${loot.amount} 🐟! Ваш баланс: ${loot.balance} 🐟`
+              : `🎉 СОКРОВИЩЕ! Вы нашли джекпот — 40 🐟! Ваш баланс: ${loot.balance} 🐟`;
 
     try {
       await sendTelegramMessage(message.chat.id, responseText, message.message_id);
@@ -107,12 +141,17 @@ const router: IRouter = Router();
 });
 
 function formatRemainingTime(nextClaimAt: Date, now = new Date()): string {
-  const totalSeconds = Math.max(0, Math.ceil((nextClaimAt.getTime() - now.getTime()) / 1000));
+  const totalSeconds = Math.max(
+    0,
+    Math.ceil((nextClaimAt.getTime() - now.getTime()) / 1000),
+  );
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
 
-  return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+  return [hours, minutes, seconds]
+    .map((value) => String(value).padStart(2, "0"))
+    .join(":");
 }
 
 export default router;
