@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { registerTelegramWebhook } from "./services/telegram";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,18 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  if (process.env.NODE_ENV === "production") {
+    const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL;
+    if (!webhookUrl) {
+      logger.warn(
+        "TELEGRAM_WEBHOOK_URL is not configured; Telegram webhook registration was skipped.",
+      );
+      return;
+    }
+
+    void registerTelegramWebhook(webhookUrl).catch((error) => {
+      logger.error({ err: error }, "Could not register Telegram webhook");
+    });
+  }
 });

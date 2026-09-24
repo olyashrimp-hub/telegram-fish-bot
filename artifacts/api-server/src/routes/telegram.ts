@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import {
   getTelegramDisplayName,
+  isValidTelegramWebhookSecret,
   parseFishCommand,
   sendTelegramMessage,
   type TelegramUpdate,
@@ -13,7 +14,7 @@ import {
 
 const router: IRouter = Router();
 
-router.post("/telegram/webhook", async (req, res) => {
+  const secret = req.header("x-telegram-bot-api-secret-token");
   const update = req.body as TelegramUpdate;
   const message = update?.message;
   const text = message?.text;
@@ -30,9 +31,7 @@ router.post("/telegram/webhook", async (req, res) => {
       displayName: getTelegramDisplayName(message.from),
     });
 
-    const responseText = daily.ok
-      ? `Вы поймали ${daily.amount} 🐟, так держать! Ваш баланс: ${daily.balance} 🐟`
-      : "❌ Бонус можно получать только раз в 3 дня.";
+  let responseText: string;
 
     try {
       await sendTelegramMessage(message.chat.id, responseText, message.message_id);
@@ -51,19 +50,7 @@ router.post("/telegram/webhook", async (req, res) => {
       displayName: getTelegramDisplayName(message.from),
     });
 
-    const responseText = !loot.ok
-      ? loot.reason === "insufficient-balance"
-        ? "❌ Сундук стоит 10 🐟! У вас недостаточно рыбок."
-        : `⏳ Следующий сундук можно открыть через ${formatRemainingTime(loot.nextClaimAt)}.`
-      : loot.outcome === "piranha"
-        ? `Упс, похоже сегодня не ваш день. Из сундука выпрыгивает пиранья, больно кусает вас. Вы теряете 5 рыб. Ваш баланс: ${loot.balance} 🐟`
-        : loot.outcome === "common"
-          ? `📦 Вы открыли сундук и нашли ${loot.amount} 🐟! Ваш баланс: ${loot.balance} 🐟`
-          : loot.outcome === "great"
-            ? `📦 Отличная находка! В сундуке оказалось ${loot.amount} 🐟! Ваш баланс: ${loot.balance} 🐟`
-            : loot.outcome === "super"
-              ? `📦 Супер-удача! В сундуке оказалось ${loot.amount} 🐟! Ваш баланс: ${loot.balance} 🐟`
-              : `🎉 СОКРОВИЩЕ! Вы нашли джекпот — 40 🐟! Ваш баланс: ${loot.balance} 🐟`;
+  let responseText: string;
 
     try {
       await sendTelegramMessage(message.chat.id, responseText, message.message_id);
