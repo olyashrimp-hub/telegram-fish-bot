@@ -1,10 +1,16 @@
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
+import { db, fishUsersTable, type FishUser } from "@workspace/db";
 import {
-  db,
-  fishTransfersTable,
-  fishUsersTable,
-  type FishUser,
-} from "@workspace/db";
+  FISH_EXPIRY_MS,
+  addFishLotForLockedUser,
+  getFishUserForUpdate,
+  getFishUsersForUpdate,
+  protectExistingFishLots,
+  spendFishLotsForLockedUser,
+  type FishTransaction,
+} from "./fish-ledger";
+
+export const MAIN_ADMIN_TELEGRAM_ID = 5145751097;
 
 export type TransferFailure =
   | { kind: "negative-balance" }
@@ -30,9 +36,23 @@ export type LootResult =
   | { ok: false; reason: "cooldown"; nextClaimAt: Date }
   | { ok: false; reason: "insufficient-balance" };
 
+export type FridgePurchaseResult =
+  | { ok: true; balance: number; expiresAt: Date }
+  | { ok: false };
+
+export type FishProfile = {
+  balance: number;
+  fridgeExpiresAt: Date | null;
+};
+
+export type DeductionResult =
+  | { ok: true; balance: number }
+  | { ok: false; reason: "fridge-protected" | "not-authorized" | "insufficient-balance" };
+
 const DAILY_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
 const LOOT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const LOOT_COST = 10;
+const FRIDGE_COST = 150;
 
 export async function claimDailyFish({
   telegramId,
@@ -44,17 +64,7 @@ export async function claimDailyFish({
   now?: Date;
 }): Promise<DailyResult> {
   return db.transaction(async (tx) => {
-    await ensureUser(tx, telegramId, displayName);
-
-    const [user] = await tx
-      .select()
-      .from(fishUsersTable)
-      .where(eq(fishUsersTable.telegramId, telegramId))
-      .for("update");
-
-    if (!user) {
-      throw new Error("Fish user was not created before claiming the daily bonus.");
-    }
+    const user = await getFishUserForUpdate(tx, telegramId, displayName);
 
     if (user.lastDailyAt) {
       const nextClaimAt = new Date(user.lastDailyAt.getTime() + DAILY_COOLDOWN_MS);
@@ -63,15 +73,17 @@ export async function claimDailyFish({
       }
     }
 
-    const amount = Math.floor(Math.random() * 10) + 1;
-    const balance = user.balance + amount;
-
+    const amount = randomInteger(1, 10);
+    const balance = await addFishLotForLockedUser(
+      tx,
+      user,
+      amount,
+      "daily",
+      now,
+    );
     await tx
       .update(fishUsersTable)
-      .set({
-        balance: sql`${fishUsersTable.balance} + ${amount}`,
-        lastDailyAt: now,
-      })
+      .set({ lastDailyAt: now })
       .where(eq(fishUsersTable.telegramId, telegramId));
 
     return { ok: true, amount, balance };
@@ -88,17 +100,7 @@ export async function openLootChest({
   now?: Date;
 }): Promise<LootResult> {
   return db.transaction(async (tx) => {
-    await ensureUser(tx, telegramId, displayName);
-
-    const [user] = await tx
-      .select()
-      .from(fishUsersTable)
-      .where(eq(fishUsersTable.telegramId, telegramId))
-      .for("update");
-
-    if (!user) {
-      throw new Error("Fish user was not created before opening the loot chest.");
-    }
+    const user = await getFishUserForUpdate(tx, telegramId, displayName);
 
     if (user.lastLootAt) {
       const nextClaimAt = new Date(user.lastLootAt.getTime() + LOOT_COOLDOWN_MS);
@@ -114,28 +116,32 @@ export async function openLootChest({
     const roll = Math.floor(Math.random() * 100);
     let outcome: LootResult;
     if (roll < 10) {
-      outcome = { ok: true, outcome: "piranha", balance: user.balance - 15 };
+      const balance = await spendFishLotsForLockedUser(tx, user, 15, true);
+      outcome = { ok: true, outcome: "piranha", balance };
     } else if (roll < 60) {
       const amount = randomInteger(15, 25);
-      outcome = { ok: true, outcome: "common", amount, balance: user.balance - LOOT_COST + amount };
+      await spendFishLotsForLockedUser(tx, user, LOOT_COST);
+      const balance = await addFishLotForLockedUser(tx, user, amount, "loot", now);
+      outcome = { ok: true, outcome: "common", amount, balance };
     } else if (roll < 90) {
       const amount = randomInteger(26, 30);
-      outcome = { ok: true, outcome: "great", amount, balance: user.balance - LOOT_COST + amount };
+      await spendFishLotsForLockedUser(tx, user, LOOT_COST);
+      const balance = await addFishLotForLockedUser(tx, user, amount, "loot", now);
+      outcome = { ok: true, outcome: "great", amount, balance };
     } else if (roll < 95) {
       const amount = randomInteger(31, 35);
-      outcome = { ok: true, outcome: "super", amount, balance: user.balance - LOOT_COST + amount };
+      await spendFishLotsForLockedUser(tx, user, LOOT_COST);
+      const balance = await addFishLotForLockedUser(tx, user, amount, "loot", now);
+      outcome = { ok: true, outcome: "super", amount, balance };
     } else {
-      outcome = { ok: true, outcome: "jackpot", amount: 40, balance: user.balance - LOOT_COST + 40 };
+      await spendFishLotsForLockedUser(tx, user, LOOT_COST);
+      const balance = await addFishLotForLockedUser(tx, user, 40, "loot", now);
+      outcome = { ok: true, outcome: "jackpot", amount: 40, balance };
     }
 
-    const balanceChange =
-      outcome.outcome === "piranha" ? -15 : outcome.balance - user.balance;
     await tx
       .update(fishUsersTable)
-      .set({
-        balance: sql`${fishUsersTable.balance} + ${balanceChange}`,
-        lastLootAt: now,
-      })
+      .set({ lastLootAt: now })
       .where(eq(fishUsersTable.telegramId, telegramId));
 
     return outcome;
@@ -148,29 +154,24 @@ export async function transferFish({
   recipientTelegramId,
   recipientDisplayName,
   amount,
+  now = new Date(),
 }: {
   senderTelegramId: number;
   senderDisplayName: string;
   recipientTelegramId: number;
   recipientDisplayName: string;
   amount: number;
+  now?: Date;
 }): Promise<TransferResult> {
   if (!Number.isSafeInteger(amount) || amount <= 0) {
     return { ok: false, failure: { kind: "invalid-amount" } };
   }
 
   return db.transaction(async (tx) => {
-    await ensureUser(tx, senderTelegramId, senderDisplayName);
-    await ensureUser(tx, recipientTelegramId, recipientDisplayName);
-
-    const userIds = [...new Set([senderTelegramId, recipientTelegramId])];
-    const users = await tx
-      .select()
-      .from(fishUsersTable)
-      .where(inArray(fishUsersTable.telegramId, userIds))
-      .orderBy(asc(fishUsersTable.telegramId))
-      .for("update");
-
+    const users = await getFishUsersForUpdate(tx, [
+      { telegramId: senderTelegramId, displayName: senderDisplayName },
+      { telegramId: recipientTelegramId, displayName: recipientDisplayName },
+    ]);
     const sender = users.find((user) => user.telegramId === senderTelegramId);
     const recipient = users.find((user) => user.telegramId === recipientTelegramId);
 
@@ -189,45 +190,103 @@ export async function transferFish({
       };
     }
 
-    await tx
-      .update(fishUsersTable)
-      .set({ balance: sql`${fishUsersTable.balance} - ${amount}` })
-      .where(eq(fishUsersTable.telegramId, senderTelegramId));
+    await spendFishLotsForLockedUser(tx, sender, amount);
+    await addFishLotForLockedUser(tx, recipient, amount, "transfer", now);
+
+    return { ok: true, sender, recipient };
+  });
+}
+
+export async function buyFridge({
+  telegramId,
+  displayName,
+  now = new Date(),
+}: {
+  telegramId: number;
+  displayName: string;
+  now?: Date;
+}): Promise<FridgePurchaseResult> {
+  return db.transaction(async (tx) => {
+    const user = await getFishUserForUpdate(tx, telegramId, displayName);
+    if (user.balance < FRIDGE_COST) {
+      return { ok: false };
+    }
+
+    const balance = await spendFishLotsForLockedUser(tx, user, FRIDGE_COST);
+    const expiresAt = new Date(now.getTime() + FISH_EXPIRY_MS);
 
     await tx
       .update(fishUsersTable)
-      .set({ balance: sql`${fishUsersTable.balance} + ${amount}` })
-      .where(eq(fishUsersTable.telegramId, recipientTelegramId));
+      .set({ fridgeExpiresAt: expiresAt })
+      .where(eq(fishUsersTable.telegramId, telegramId));
+    await protectExistingFishLots(tx, telegramId, expiresAt);
 
-    await tx.insert(fishTransfersTable).values({
-      senderTelegramId,
-      recipientTelegramId,
-      amount,
-    });
+    return { ok: true, balance, expiresAt };
+  });
+}
 
+export async function getFishProfile({
+  telegramId,
+  displayName,
+}: {
+  telegramId: number;
+  displayName: string;
+}): Promise<FishProfile> {
+  return db.transaction(async (tx) => {
+    const user = await getFishUserForUpdate(tx, telegramId, displayName);
     return {
-      ok: true,
-      sender: { ...sender, balance: sender.balance - amount },
-      recipient: { ...recipient, balance: recipient.balance + amount },
+      balance: user.balance,
+      fridgeExpiresAt: user.fridgeExpiresAt,
     };
   });
 }
 
-async function ensureUser(
-  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-  telegramId: number,
-  displayName: string,
-) {
-  await tx
-    .insert(fishUsersTable)
-    .values({ telegramId, displayName })
-    .onConflictDoNothing({ target: fishUsersTable.telegramId });
+export async function deductFish({
+  actorTelegramId,
+  targetTelegramId,
+  targetDisplayName,
+  amount,
+  now = new Date(),
+}: {
+  actorTelegramId: number;
+  targetTelegramId: number;
+  targetDisplayName: string;
+  amount: number;
+  now?: Date;
+}): Promise<DeductionResult> {
+  return db.transaction(async (tx) => {
+    const user = await getFishUserForUpdate(tx, targetTelegramId, targetDisplayName);
+    const fridgeActive =
+      user.fridgeExpiresAt && user.fridgeExpiresAt.getTime() > now.getTime();
 
-  await tx
-    .update(fishUsersTable)
-    .set({ displayName })
-    .where(eq(fishUsersTable.telegramId, telegramId));
+    if (fridgeActive && actorTelegramId !== MAIN_ADMIN_TELEGRAM_ID) {
+      return { ok: false, reason: "fridge-protected" };
+    }
+    if (actorTelegramId !== MAIN_ADMIN_TELEGRAM_ID) {
+      return { ok: false, reason: "not-authorized" };
+    }
+    if (user.balance < amount) {
+      return { ok: false, reason: "insufficient-balance" };
+    }
+
+    const balance = await spendFishLotsForLockedUser(tx, user, amount);
+    return { ok: true, balance };
+  });
 }
+
+export async function lockFishUsers(
+  tx: FishTransaction,
+  ids: number[],
+): Promise<FishUser[]> {
+  return tx
+    .select()
+    .from(fishUsersTable)
+    .where(inArray(fishUsersTable.telegramId, ids))
+    .orderBy(asc(fishUsersTable.telegramId))
+    .for("update");
+}
+
+export { FISH_EXPIRY_MS };
 
 function randomInteger(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;

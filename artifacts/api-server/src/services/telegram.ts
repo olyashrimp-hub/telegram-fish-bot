@@ -11,7 +11,7 @@ export type TelegramUser = {
 
 export type TelegramMessage = {
   message_id: number;
-  chat: { id: number };
+  chat: { id: number; type?: string };
   from?: TelegramUser;
   text?: string;
   reply_to_message?: TelegramMessage;

@@ -8,6 +8,9 @@ import {
 } from "../services/telegram";
 import {
   claimDailyFish,
+  buyFridge,
+  deductFish,
+  getFishProfile,
   openLootChest,
   transferFish,
 } from "../services/fish-transfers";
@@ -34,12 +37,33 @@ router.post("/telegram/webhook", async (req, res) => {
   if (!message.from.is_bot) {
     await recordChatMessage({
       chatId: message.chat.id,
+      chatType: message.chat.type ?? "unknown",
       telegramId: message.from.id,
       displayName: getTelegramDisplayName(message.from),
     });
   }
 
   if (!text) {
+    res.json({ ok: true });
+    return;
+  }
+
+  const isBalanceCommand = /^(?:\/balance(?:@[a-zA-Z0-9_]+)?|баланс|профиль)$/iu.test(
+    text.trim(),
+  );
+  if (isBalanceCommand) {
+    const profile = await getFishProfile({
+      telegramId: message.from.id,
+      displayName: getTelegramDisplayName(message.from),
+    });
+    const responseText = `🐟 Баланс: ${profile.balance} 🐟\n${formatFridgeStatus(profile.fridgeExpiresAt)}`;
+
+    try {
+      await sendTelegramMessage(message.chat.id, responseText, message.message_id);
+    } catch (error) {
+      req.log.error({ err: error }, "Could not answer Telegram balance command");
+    }
+
     res.json({ ok: true });
     return;
   }
@@ -59,6 +83,30 @@ router.post("/telegram/webhook", async (req, res) => {
       await sendTelegramMessage(message.chat.id, responseText, message.message_id);
     } catch (error) {
       req.log.error({ err: error }, "Could not answer Telegram daily command");
+    }
+
+    res.json({ ok: true });
+    return;
+  }
+
+  const isFridgeCommand =
+    /^(?:\/buy_fridge(?:@[a-zA-Z0-9_]+)?|\/fridge(?:@[a-zA-Z0-9_]+)?|купить холодильник)$/iu.test(
+      text.trim(),
+    );
+  if (isFridgeCommand) {
+    const fridge = await buyFridge({
+      telegramId: message.from.id,
+      displayName: getTelegramDisplayName(message.from),
+    });
+    const displayName = getTelegramDisplayName(message.from);
+    const responseText = fridge.ok
+      ? `❄️ ${displayName}, вы успешно купили холодильник за 150 🐟! Теперь ваши рыбки в безопасности на 7 дней.`
+      : "❌ Холодильник стоит 150 🐟! У вас недостаточно рыбок.";
+
+    try {
+      await sendTelegramMessage(message.chat.id, responseText, message.message_id);
+    } catch (error) {
+      req.log.error({ err: error }, "Could not answer Telegram fridge command");
     }
 
     res.json({ ok: true });
@@ -90,6 +138,41 @@ router.post("/telegram/webhook", async (req, res) => {
       await sendTelegramMessage(message.chat.id, responseText, message.message_id);
     } catch (error) {
       req.log.error({ err: error }, "Could not answer Telegram loot command");
+    }
+
+    res.json({ ok: true });
+    return;
+  }
+
+  const deductionMatch = text.trim().match(/^-([0-9]+)\s+рыб(?:ок|ы)?$/iu);
+  if (deductionMatch) {
+    const target = message.reply_to_message?.from;
+    const amount = Number(deductionMatch[1]);
+    let responseText: string;
+
+    if (!target) {
+      responseText = "❌ Используйте эту команду в ответ на сообщение пользователя.";
+    } else {
+      const result = await deductFish({
+        actorTelegramId: message.from.id,
+        targetTelegramId: target.id,
+        targetDisplayName: getTelegramDisplayName(target),
+        amount,
+      });
+      responseText =
+        !result.ok && result.reason === "fridge-protected"
+          ? "❌ У игрока активен холодильник! Списать рыбки может только главный администратор."
+          : !result.ok && result.reason === "not-authorized"
+            ? "❌ Недостаточно прав для списания рыбок."
+            : !result.ok
+              ? "❌ У игрока недостаточно рыбок."
+              : `✅ Списано ${amount} 🐟. Новый баланс: ${result.balance} 🐟`;
+    }
+
+    try {
+      await sendTelegramMessage(message.chat.id, responseText, message.message_id);
+    } catch (error) {
+      req.log.error({ err: error }, "Could not answer Telegram deduction command");
     }
 
     res.json({ ok: true });
@@ -152,6 +235,19 @@ function formatRemainingTime(nextClaimAt: Date, now = new Date()): string {
   return [hours, minutes, seconds]
     .map((value) => String(value).padStart(2, "0"))
     .join(":");
+}
+
+function formatFridgeStatus(expiresAt: Date | null, now = new Date()): string {
+  if (!expiresAt || expiresAt.getTime() <= now.getTime()) {
+    return "❄️ Холодильник: нет";
+  }
+
+  const totalHours = Math.ceil(
+    (expiresAt.getTime() - now.getTime()) / (60 * 60 * 1000),
+  );
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return `❄️ Холодильник: активен ещё ${days} дн. ${hours} ч.`;
 }
 
 export default router;

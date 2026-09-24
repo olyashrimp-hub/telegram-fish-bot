@@ -3,9 +3,14 @@ import {
   activitySettlementsTable,
   chatActivityTable,
   db,
-  fishUsersTable,
+  fishUserChatsTable,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
+import {
+  addFishLotForLockedUser,
+  ensureFishUserRecord,
+  getFishUserForUpdate,
+} from "./fish-ledger";
 import { sendTelegramMessage } from "./telegram";
 
 const UTC_PLUS_7_TIME_ZONE = "Asia/Ho_Chi_Minh";
@@ -24,25 +29,23 @@ export async function recordChatMessage({
   chatId,
   telegramId,
   displayName,
+  chatType,
   messageDate = new Date(),
 }: {
   chatId: number;
   telegramId: number;
   displayName: string;
+  chatType: string;
   messageDate?: Date;
 }): Promise<void> {
+  if (chatType !== "group" && chatType !== "supergroup") {
+    return;
+  }
+
   const activityDate = getActivityDate(messageDate);
 
   await db.transaction(async (tx) => {
-    await tx
-      .insert(fishUsersTable)
-      .values({ telegramId, displayName })
-      .onConflictDoNothing({ target: fishUsersTable.telegramId });
-
-    await tx
-      .update(fishUsersTable)
-      .set({ displayName })
-      .where(eq(fishUsersTable.telegramId, telegramId));
+    await ensureFishUserRecord(tx, telegramId, displayName);
 
     await tx
       .insert(chatActivityTable)
@@ -63,6 +66,14 @@ export async function recordChatMessage({
           displayName,
           messageCount: sql`${chatActivityTable.messageCount} + 1`,
         },
+      });
+
+    await tx
+      .insert(fishUserChatsTable)
+      .values({ telegramId, chatId, chatType })
+      .onConflictDoUpdate({
+        target: [fishUserChatsTable.telegramId, fishUserChatsTable.chatId],
+        set: { chatType, lastSeenAt: messageDate },
       });
   });
 }
@@ -160,10 +171,14 @@ async function settleChatActivity(
     }));
 
     for (const winner of winners) {
-      await tx
-        .update(fishUsersTable)
-        .set({ balance: sql`${fishUsersTable.balance} + ${winner.reward}` })
-        .where(eq(fishUsersTable.telegramId, winner.telegramId));
+      const user = await getFishUserForUpdate(tx, winner.telegramId, winner.displayName);
+      await addFishLotForLockedUser(
+        tx,
+        user,
+        winner.reward,
+        "activity",
+        new Date(),
+      );
     }
 
     await tx

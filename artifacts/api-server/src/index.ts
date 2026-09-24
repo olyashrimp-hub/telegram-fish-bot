@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { registerTelegramWebhook } from "./services/telegram";
 import { startActivityScheduler } from "./services/activity";
+import { startFishDecayScheduler } from "./services/fish-decay";
 
 const rawPort = process.env["PORT"];
 
@@ -25,6 +26,7 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startActivityScheduler();
+  startFishDecayScheduler();
 
   if (process.env.NODE_ENV === "production") {
     const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL;

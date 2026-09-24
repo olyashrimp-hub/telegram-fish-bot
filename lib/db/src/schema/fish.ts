@@ -11,6 +11,7 @@ export const fishUsersTable = pgTable(
     balance: integer("balance").notNull().default(0),
     lastDailyAt: timestamp("last_daily_at", { withTimezone: true }),
     lastLootAt: timestamp("last_loot_at", { withTimezone: true }),
+    fridgeExpiresAt: timestamp("fridge_expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
@@ -29,6 +30,34 @@ export const fishTransfersTable = pgTable("fish_transfers", {
   amount: integer("amount").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const fishLotsTable = pgTable("fish_lots", {
+  id: serial("id").primaryKey(),
+  telegramId: bigint("telegram_id", { mode: "number" }).notNull(),
+  amount: integer("amount").notNull(),
+  remainingAmount: integer("remaining_amount").notNull(),
+  source: text("source").notNull(),
+  acquiredAt: timestamp("acquired_at", { withTimezone: true }).notNull(),
+  protectedUntil: timestamp("protected_until", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const fishUserChatsTable = pgTable(
+  "fish_user_chats",
+  {
+    id: serial("id").primaryKey(),
+    telegramId: bigint("telegram_id", { mode: "number" }).notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    chatType: text("chat_type").notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userChatUnique: uniqueIndex("fish_user_chats_user_chat_unique").on(
+      table.telegramId,
+      table.chatId,
+    ),
+  }),
+);
 
 export const insertFishUserSchema = createInsertSchema(fishUsersTable).omit({
   id: true,
