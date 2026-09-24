@@ -16,8 +16,10 @@ import {
 } from "../services/fish-transfers";
 
 import { formatLootResponse } from "../services/loot";
+
 import { recordChatMessage } from "../services/activity";
 import { logger } from "../lib/logger";
+
 
 const router: IRouter = Router();
 
@@ -155,20 +157,20 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void
         displayName: getTelegramDisplayName(message.from),
       });
 
-        let responseText = "";
-        if (userProfile.balance < bet) {
-          responseText = `❌ У вас недостаточно рыбок для ставки ${bet}! Ваш баланс: ${userProfile.balance}`;
-        } else {
-          const isWin = Math.random() < 0.5;
+      let responseText = "";
+
+      if (userProfile.balance < bet) {
+        responseText = `❌ У вас недостаточно рыбок для ставки ${bet}! Ваш баланс: ${userProfile.balance}`;
+      } else {
+        const isWin = Math.random() < 0.5;
 
           if (isWin) {
             const winBalance = userProfile.balance + bet;
             responseText = `🎰 Выигрыш! Вы выиграли ${bet} 🐟. Остаток: ${winBalance} 🐟`;
           } else {
             const newBalance = userProfile.balance - bet;
-            responseText = `🎰 Проигрыш! Вы потеряли ${bet} 🐟. Остаток: ${newBalance} 🐟`;
+            responseText = `🎰 Проигрыш! Вы проиграли ${bet} 🐟. Остаток: ${newBalance} 🐟`;
           }
-        }
 
         try {
 
@@ -182,10 +184,6 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void
         await sendTelegramMessage(message.chat.id, responseText, message.message_id);
       } catch (error) {
         logger.error({ err: error }, "Could not answer Telegram roulette command");
-      }
-
-      return;
-    }
 
 
   const deductionMatch = text.trim().match(/^-([0-9]+)\s+рыб(?:ок|ы)?$/iu);
@@ -256,47 +254,43 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void
     }
   }
 
-  try {
-    await sendTelegramMessage(message.chat.id, responseText, message.message_id);
-  } catch (error) {
-    logger.error({ err: error }, "Could not answer Telegram fish command");
+    try {
+      await sendTelegramMessage(message.chat.id, responseText, message.message_id);
+    } catch (error) {
+      logger.error({ err: error }, "Could not answer Telegram fish command");
+    }
   }
 }
 
-function formatFridgeStatus(expiresAt: Date | null, now = new Date()): string {
-  if (!expiresAt || expiresAt.getTime() <= now.getTime()) {
-    return "❄️ Холодильник: отсутствует";
-  }
 
+function formatFridgeStatus(expiresAt: Date | null, now: Date): string {
+  if (!expiresAt || expiresAt.getTime() <= now.getTime()) {
+    return "🧊 Холодильник: отсутствует";
+  }
   const remaining = formatRemainingParts(expiresAt, now);
-  return `❄️ Холодильник: активен до ${formatDateTime(expiresAt)} (осталось ${remaining.days} дн. ${remaining.hours} ч.)`;
+  return `🧊 Холодильник: активен до ${formatDateTime(expiresAt)} (осталось ${remaining.days} дн. ${remaining.hours} ч.)`;
 }
 
 function formatBonusStatus(
   command: string,
   lastUsedAt: Date | null,
   cooldownMs: number,
-  now: Date,
+  now: Date
 ): string {
-  if (!lastUsedAt || lastUsedAt.getTime() + cooldownMs <= now.getTime()) {
-    return `🎁 ${command}: доступен`;
+  if (!lastUsedAt || now.getTime() - lastUsedAt.getTime() >= cooldownMs) {
+    return `🎁 ${command}: доступен!`;
   }
-
   const remaining = formatRemainingParts(
     new Date(lastUsedAt.getTime() + cooldownMs),
-    now,
+    now
   );
   return `🎁 ${command}: через ${remaining.days} дн. ${remaining.hours} ч. ${remaining.minutes} мин.`;
 }
 
-function formatRemainingParts(target: Date, now: Date): {
-  days: number;
-  hours: number;
-  minutes: number;
-} {
+function formatRemainingParts(target: Date, now: Date) {
   const totalMinutes = Math.max(
     0,
-    Math.ceil((target.getTime() - now.getTime()) / (60 * 1000)),
+    Math.ceil((target.getTime() - now.getTime()) / (60 * 1000))
   );
   const days = Math.floor(totalMinutes / (24 * 60));
   const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
@@ -316,9 +310,10 @@ function formatDateTime(date: Date): string {
   const values = Object.fromEntries(
     parts
       .filter((part) => part.type !== "literal")
-      .map((part) => [part.type, part.value]),
+      .map((part) => [part.type, part.value])
   );
   return `${values.day}.${values.month} ${values.hour}:${values.minute}`;
 }
+});
 
 export default router;
