@@ -43,6 +43,8 @@ export type FridgePurchaseResult =
 export type FishProfile = {
   balance: number;
   fridgeExpiresAt: Date | null;
+  lastDailyAt: Date | null;
+  lastLootAt: Date | null;
 };
 
 export type DeductionResult =
@@ -237,6 +239,8 @@ export async function getFishProfile({
     return {
       balance: user.balance,
       fridgeExpiresAt: user.fridgeExpiresAt,
+      lastDailyAt: user.lastDailyAt,
+      lastLootAt: user.lastLootAt,
     };
   });
 }

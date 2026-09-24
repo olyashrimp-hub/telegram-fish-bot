@@ -48,15 +48,24 @@ router.post("/telegram/webhook", async (req, res) => {
     return;
   }
 
-  const isBalanceCommand = /^(?:\/balance(?:@[a-zA-Z0-9_]+)?|баланс|профиль)$/iu.test(
-    text.trim(),
-  );
+  const isBalanceCommand =
+    /^(?:\/balance(?:@[a-zA-Z0-9_]+)?|баланс|мои рыбки|профиль)$/iu.test(
+      text.trim(),
+    );
   if (isBalanceCommand) {
+    const profileUser = message.reply_to_message?.from ?? message.from;
     const profile = await getFishProfile({
-      telegramId: message.from.id,
-      displayName: getTelegramDisplayName(message.from),
+      telegramId: profileUser.id,
+      displayName: getTelegramDisplayName(profileUser),
     });
-    const responseText = `🐟 Баланс: ${profile.balance} 🐟\n${formatFridgeStatus(profile.fridgeExpiresAt)}`;
+    const now = new Date();
+    const responseText = [
+      `🎣 Профиль ${getTelegramDisplayName(profileUser)}:`,
+      `🐟 Баланс: ${profile.balance} рыб`,
+      formatFridgeStatus(profile.fridgeExpiresAt, now),
+      formatBonusStatus("/daily", profile.lastDailyAt, 3 * 24 * 60 * 60 * 1000, now),
+      formatBonusStatus("/loot", profile.lastLootAt, 24 * 60 * 60 * 1000, now),
+    ].join("\n");
 
     try {
       await sendTelegramMessage(message.chat.id, responseText, message.message_id);
@@ -239,15 +248,60 @@ function formatRemainingTime(nextClaimAt: Date, now = new Date()): string {
 
 function formatFridgeStatus(expiresAt: Date | null, now = new Date()): string {
   if (!expiresAt || expiresAt.getTime() <= now.getTime()) {
-    return "❄️ Холодильник: нет";
+    return "❄️ Холодильник: отсутствует";
   }
 
-  const totalHours = Math.ceil(
-    (expiresAt.getTime() - now.getTime()) / (60 * 60 * 1000),
+  const remaining = formatRemainingParts(expiresAt, now);
+  return `❄️ Холодильник: активен до ${formatDateTime(expiresAt)} (осталось ${remaining.days} дн. ${remaining.hours} ч.)`;
+}
+
+function formatBonusStatus(
+  command: string,
+  lastUsedAt: Date | null,
+  cooldownMs: number,
+  now: Date,
+): string {
+  if (!lastUsedAt || lastUsedAt.getTime() + cooldownMs <= now.getTime()) {
+    return `🎁 ${command}: доступен`;
+  }
+
+  const remaining = formatRemainingParts(
+    new Date(lastUsedAt.getTime() + cooldownMs),
+    now,
   );
-  const days = Math.floor(totalHours / 24);
-  const hours = totalHours % 24;
-  return `❄️ Холодильник: активен ещё ${days} дн. ${hours} ч.`;
+  return `🎁 ${command}: через ${remaining.days} дн. ${remaining.hours} ч. ${remaining.minutes} мин.`;
+}
+
+function formatRemainingParts(target: Date, now: Date): {
+  days: number;
+  hours: number;
+  minutes: number;
+} {
+  const totalMinutes = Math.max(
+    0,
+    Math.ceil((target.getTime() - now.getTime()) / (60 * 1000)),
+  );
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+  return { days, hours, minutes };
+}
+
+function formatDateTime(date: Date): string {
+  const parts = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  return `${values.day}.${values.month} ${values.hour}:${values.minute}`;
 }
 
 export default router;
