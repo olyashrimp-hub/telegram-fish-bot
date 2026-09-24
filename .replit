@@ -22,7 +22,7 @@ timeoutMs = 20000
 [userenv]
 
 [userenv.production]
-TELEGRAM_POLLING_ENABLED = "true"
+TELEGRAM_WEBHOOK_URL = "https://telegram-fish-bot-1--olgaduvanova.replit.app/api/telegram/webhook"
 
 [nix]
 channel = "stable-25_05"

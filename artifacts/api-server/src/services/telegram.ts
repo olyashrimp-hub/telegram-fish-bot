@@ -28,9 +28,6 @@ type TelegramApiResponse<T> = {
   description?: string;
 };
 
-const TELEGRAM_POLL_TIMEOUT_SECONDS = 25;
-const TELEGRAM_REQUEST_TIMEOUT_MS = (TELEGRAM_POLL_TIMEOUT_SECONDS + 10) * 1000;
-
 function getTelegramToken(): string {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -70,93 +67,22 @@ export function isValidTelegramWebhookSecret(
   );
 }
 
-export async function deleteTelegramWebhook(): Promise<void> {
+export async function registerTelegramWebhook(webhookUrl: string): Promise<void> {
+  const parsedUrl = new URL(webhookUrl);
+  if (parsedUrl.protocol !== "https:") {
+    throw new Error("TELEGRAM_WEBHOOK_URL must use HTTPS.");
+  }
+
   await callTelegramApi<boolean>(
-    "deleteWebhook",
-    { drop_pending_updates: false },
-    20_000,
-  );
-  logger.info("Telegram webhook deleted; long polling is ready.");
-}
-
-export function startTelegramPolling(
-  handleUpdate: (update: TelegramUpdate) => Promise<void>,
-): void {
-  if (!isTelegramPollingEnabled()) {
-    logger.info("Telegram long polling is disabled for this environment.");
-    return;
-  }
-
-  void runTelegramPolling(handleUpdate);
-}
-
-async function runTelegramPolling(
-  handleUpdate: (update: TelegramUpdate) => Promise<void>,
-): Promise<void> {
-  let nextOffset: number | undefined;
-  let retryDelayMs = 1_000;
-
-  while (true) {
-    try {
-      await deleteTelegramWebhook();
-      break;
-    } catch (error) {
-      logger.error(
-        { err: error, retryDelayMs },
-        "Could not delete Telegram webhook before polling; retrying",
-      );
-      await sleep(retryDelayMs);
-      retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
-    }
-  }
-
-  retryDelayMs = 1_000;
-  logger.info(
-    { timeoutSeconds: TELEGRAM_POLL_TIMEOUT_SECONDS },
-    "Telegram long polling started.",
-  );
-
-  while (true) {
-    try {
-      const updates = await getTelegramUpdates(nextOffset);
-      retryDelayMs = 1_000;
-
-      for (const update of updates) {
-        try {
-          await handleUpdate(update);
-          nextOffset = update.update_id + 1;
-        } catch (error) {
-          logger.error(
-            { err: error, updateId: update.update_id },
-            "Could not process Telegram update; retrying the same update",
-          );
-          await sleep(1_000);
-          break;
-        }
-      }
-    } catch (error) {
-      logger.error(
-        { err: error, retryDelayMs },
-        "Telegram long polling network error; reconnecting",
-      );
-      await sleep(retryDelayMs);
-      retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
-    }
-  }
-}
-
-async function getTelegramUpdates(
-  offset: number | undefined,
-): Promise<TelegramUpdate[]> {
-  return callTelegramApi<TelegramUpdate[]>(
-    "getUpdates",
+    "setWebhook",
     {
-      ...(offset === undefined ? {} : { offset }),
-      timeout: TELEGRAM_POLL_TIMEOUT_SECONDS,
+      url: parsedUrl.toString(),
+      secret_token: getTelegramWebhookSecret(),
       allowed_updates: ["message"],
     },
-    TELEGRAM_REQUEST_TIMEOUT_MS,
+    20_000,
   );
+  logger.info({ webhookUrl: parsedUrl.toString() }, "Telegram webhook registered.");
 }
 
 async function callTelegramApi<T>(
@@ -192,21 +118,6 @@ async function callTelegramApi<T>(
   } finally {
     clearTimeout(timeout);
   }
-}
-
-function isTelegramPollingEnabled(): boolean {
-  const configured = process.env.TELEGRAM_POLLING_ENABLED;
-  if (configured === "true") {
-    return true;
-  }
-  if (configured === "false") {
-    return false;
-  }
-  return process.env.NODE_ENV === "production";
-}
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export function parseFishCommand(text: string): number | null {

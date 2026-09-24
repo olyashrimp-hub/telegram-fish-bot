@@ -1,7 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { handleTelegramUpdate } from "./routes/telegram";
-import { startTelegramPolling } from "./services/telegram";
+import { registerTelegramWebhook } from "./services/telegram";
 import { startActivityScheduler } from "./services/activity";
 import { startFishDecayScheduler } from "./services/fish-decay";
 
@@ -28,5 +27,18 @@ app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
   startActivityScheduler();
   startFishDecayScheduler();
-  startTelegramPolling(handleTelegramUpdate);
+
+  if (process.env.NODE_ENV === "production") {
+    const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL;
+    if (!webhookUrl) {
+      logger.error(
+        "TELEGRAM_WEBHOOK_URL is not configured; Telegram webhook registration was skipped.",
+      );
+      return;
+    }
+
+    void registerTelegramWebhook(webhookUrl).catch((error) => {
+      logger.error({ err: error }, "Could not register Telegram webhook");
+    });
+  }
 });
