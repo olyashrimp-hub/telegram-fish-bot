@@ -14,6 +14,7 @@ import {
   openLootChest,
   transferFish,
 } from "../services/fish-transfers";
+
 import { formatLootResponse } from "../services/loot";
 import { recordChatMessage } from "../services/activity";
 import { logger } from "../lib/logger";
@@ -146,7 +147,43 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void
     }
 
     return;
-  }
+  }    const rouletteMatch = text.trim().match(/^\/roulette(?:\@[a-zA-Z0-9_]+)?(?:\s+(\d+))?$/i);
+    if (rouletteMatch) {
+      const bet = parseInt(rouletteMatch[1] || "1", 10);
+      const userProfile = await getFishProfile({
+        telegramId: message.from.id,
+        displayName: getTelegramDisplayName(message.from),
+      });
+
+      let responseText = "";
+      if (userProfile.balance < bet) {
+        responseText = `❌ У вас недостаточно рыбок для ставки ${bet}! Ваш баланс: ${userProfile.balance}`;
+      } else {
+        const isWin = Math.random() < 0.5;
+        if (isWin) {
+          responseText = `🎰 **Рулетка!**\nВы поставили ${bet} 🐟 и **выиграли** ${bet} 🐟!`;
+        } else {
+        if (isWin) {
+          responseText = `🎰 **Рулетка!**\nВы поставили ${bet} 🐟 и **выиграли** ${bet} 🐟!`;
+        } else {
+          responseText = `🎰 **Рулетка!**\nВы поставили ${bet} 🐟 и **проиграли**.`;
+        }
+
+          responseText = `🎰 **Рулетка!**\nВы поставили ${bet} 🐟 и **проиграли**.`;
+        }
+
+
+      }
+
+      try {
+        await sendTelegramMessage(message.chat.id, responseText, message.message_id);
+      } catch (error) {
+        logger.error({ err: error }, "Could not answer Telegram roulette command");
+      }
+
+      return;
+    }
+
 
   const deductionMatch = text.trim().match(/^-([0-9]+)\s+рыб(?:ок|ы)?$/iu);
   if (deductionMatch) {
