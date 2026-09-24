@@ -10,6 +10,7 @@ export const fishUsersTable = pgTable(
     displayName: text("display_name").notNull(),
     balance: integer("balance").notNull().default(0),
     lastDailyAt: timestamp("last_daily_at", { withTimezone: true }),
+    lastLootAt: timestamp("last_loot_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
