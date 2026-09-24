@@ -1,0 +1,1 @@
+- [TypeScript test runtime](typescript-test-runtime.md) — package-local workspace binaries may be unavailable; Node 24 can run API TypeScript tests with built-in type stripping.

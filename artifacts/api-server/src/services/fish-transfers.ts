@@ -9,6 +9,13 @@ import {
   spendFishLotsForLockedUser,
   type FishTransaction,
 } from "./fish-ledger";
+import {
+  getLootNextClaimAt,
+  isLootOnCooldown,
+  LOOT_COST,
+  resolveLootOutcome,
+  type LootResult,
+} from "./loot";
 
 export const MAIN_ADMIN_TELEGRAM_ID = 5145751097;
 
@@ -24,17 +31,6 @@ export type TransferResult =
 export type DailyResult =
   | { ok: true; amount: number; balance: number }
   | { ok: false; nextClaimAt: Date };
-
-export type LootResult =
-  | { ok: true; outcome: "piranha"; balance: number }
-  | {
-      ok: true;
-      outcome: "common" | "great" | "super" | "jackpot";
-      amount: number;
-      balance: number;
-    }
-  | { ok: false; reason: "cooldown"; nextClaimAt: Date }
-  | { ok: false; reason: "insufficient-balance" };
 
 export type FridgePurchaseResult =
   | { ok: true; balance: number; expiresAt: Date }
@@ -52,8 +48,6 @@ export type DeductionResult =
   | { ok: false; reason: "fridge-protected" | "not-authorized" | "insufficient-balance" };
 
 const DAILY_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
-const LOOT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-const LOOT_COST = 10;
 const FRIDGE_COST = 150;
 
 export async function claimDailyFish({
@@ -105,8 +99,8 @@ export async function openLootChest({
     const user = await getFishUserForUpdate(tx, telegramId, displayName);
 
     if (user.lastLootAt) {
-      const nextClaimAt = new Date(user.lastLootAt.getTime() + LOOT_COOLDOWN_MS);
-      if (now.getTime() < nextClaimAt.getTime()) {
+      if (isLootOnCooldown(user.lastLootAt, now)) {
+        const nextClaimAt = getLootNextClaimAt(user.lastLootAt);
         return { ok: false, reason: "cooldown", nextClaimAt };
       }
     }
@@ -115,30 +109,12 @@ export async function openLootChest({
       return { ok: false, reason: "insufficient-balance" };
     }
 
-    const roll = Math.floor(Math.random() * 100);
-    let outcome: LootResult;
-    if (roll < 10) {
-      const balance = await spendFishLotsForLockedUser(tx, user, 15, true);
-      outcome = { ok: true, outcome: "piranha", balance };
-    } else if (roll < 60) {
-      const amount = randomInteger(15, 25);
-      await spendFishLotsForLockedUser(tx, user, LOOT_COST);
-      const balance = await addFishLotForLockedUser(tx, user, amount, "loot", now);
-      outcome = { ok: true, outcome: "common", amount, balance };
-    } else if (roll < 90) {
-      const amount = randomInteger(26, 30);
-      await spendFishLotsForLockedUser(tx, user, LOOT_COST);
-      const balance = await addFishLotForLockedUser(tx, user, amount, "loot", now);
-      outcome = { ok: true, outcome: "great", amount, balance };
-    } else if (roll < 95) {
-      const amount = randomInteger(31, 35);
-      await spendFishLotsForLockedUser(tx, user, LOOT_COST);
-      const balance = await addFishLotForLockedUser(tx, user, amount, "loot", now);
-      outcome = { ok: true, outcome: "super", amount, balance };
+    const outcome = resolveLootOutcome(user.balance);
+    if (outcome.outcome === "piranha") {
+      await spendFishLotsForLockedUser(tx, user, 15, true);
     } else {
       await spendFishLotsForLockedUser(tx, user, LOOT_COST);
-      const balance = await addFishLotForLockedUser(tx, user, 40, "loot", now);
-      outcome = { ok: true, outcome: "jackpot", amount: 40, balance };
+      await addFishLotForLockedUser(tx, user, outcome.amount, "loot", now);
     }
 
     await tx
@@ -146,7 +122,7 @@ export async function openLootChest({
       .set({ lastLootAt: now })
       .where(eq(fishUsersTable.telegramId, telegramId));
 
-    return outcome;
+    return { ...outcome, balance: user.balance };
   });
 }
 
