@@ -5,7 +5,7 @@ import {
   sendTelegramMessage,
   type TelegramUpdate,
 } from "../services/telegram";
-import { transferFish } from "../services/fish-transfers";
+import { claimDailyFish, transferFish } from "../services/fish-transfers";
 
 const router: IRouter = Router();
 
@@ -15,6 +15,27 @@ router.post("/telegram/webhook", async (req, res) => {
   const text = message?.text;
 
   if (!message || !message.from || !text) {
+    res.json({ ok: true });
+    return;
+  }
+
+  const isDailyCommand = /^\/daily(?:@[a-zA-Z0-9_]+)?$/iu.test(text.trim());
+  if (isDailyCommand) {
+    const daily = await claimDailyFish({
+      telegramId: message.from.id,
+      displayName: getTelegramDisplayName(message.from),
+    });
+
+    const responseText = daily.ok
+      ? `Вы поймали ${daily.amount} 🐟, так держать! Ваш баланс: ${daily.balance} 🐟`
+      : "❌ Бонус можно получать только раз в 3 дня.";
+
+    try {
+      await sendTelegramMessage(message.chat.id, responseText, message.message_id);
+    } catch (error) {
+      req.log.error({ err: error }, "Could not answer Telegram daily command");
+    }
+
     res.json({ ok: true });
     return;
   }
